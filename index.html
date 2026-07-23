@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visualiseurs</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #0b0b0b; font-family: system-ui, sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; gap: 24px; flex-wrap: wrap; padding: 24px; }
+  a {
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    width: 280px; height: 170px; border-radius: 14px; text-decoration: none;
+    border: 1px solid rgba(255,255,255,0.15); transition: transform 0.15s, border-color 0.15s;
+  }
+  a:hover { transform: scale(1.03); border-color: rgba(255,255,255,0.45); }
+  a h2 { font-size: 21px; margin-bottom: 8px; }
+  a p { font-size: 13px; opacity: 0.65; }
+  .festival { background: linear-gradient(135deg, #1a0a2e, #2d1b4e); color: #f0d5ff; }
+  .matrix { background: linear-gradient(135deg, #020f04, #0a2912); color: #7dffa0; font-family: "Courier New", monospace; }
+</style>
+</head>
+<body>
+<a class="festival" href="festival-image.html">
+  <h2>Festival d'image</h2>
+  <p>VJ — images &amp; vidéos réactives</p>
+</a>
+<a class="matrix" href="tableur-matrix.html">
+  <h2>Tableur Matrix</h2>
+  <p>Réunions — documents &amp; transcript</p>
+</a>
+</body>
+</html>
