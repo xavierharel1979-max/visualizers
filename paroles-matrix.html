@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paroles Matrix</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; right: 16px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    transition: opacity 0.4s; z-index: 10;
+  }
+  #ui.hidden { opacity: 0; pointer-events: none; }
+  button, input[type=range] {
+    background: rgba(20,20,20,0.85); color: #ddd; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: rgba(45,45,45,0.9); }
+  button.active { border-color: rgba(255,255,255,0.6); color: #fff; }
+  input[type=range] { padding: 0; height: 32px; width: 120px; }
+  label { color: rgba(255,255,255,0.5); font-size: 12px; }
+  .sep { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
+  #status { color: rgba(255,255,255,0.45); font-size: 12px; margin-left: auto; }
+  #hint {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.35); font-size: 13px; text-align: center; max-width: 90vw;
+    transition: opacity 0.4s; z-index: 10;
+  }
+  #hint.hidden { opacity: 0; }
+  input[type=file] { display: none; }
+
+  #keymap {
+    position: fixed; top: 70px; left: 16px;
+    background: rgba(0,0,0,0.88); border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px; padding: 14px 20px; color: #ccc;
+    font-size: 12.5px; line-height: 1.75; z-index: 20; display: none;
+    columns: 3; column-gap: 26px;
+  }
+  #keymap.show { display: block; }
+  #keymap b { color: #fff; display: inline-block; min-width: 26px; }
+  select {
+    background: rgba(20,20,20,0.85); color: #ddd; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; cursor: pointer;
+  }
+  #pads {
+    position: fixed; bottom: 12px; left: 8px; right: 8px;
+    display: none; flex-wrap: wrap; gap: 6px; justify-content: center;
+    transition: opacity 0.4s; z-index: 10;
+  }
+  #pads.hidden { opacity: 0; pointer-events: none; }
+  #pads button {
+    min-width: 62px; min-height: 44px; padding: 6px 8px; font-size: 12px;
+    background: rgba(15,15,15,0.9);
+  }
+  @media (pointer: coarse) {
+    #pads { display: flex; }
+    #hint { display: none; }
+    #ui { gap: 6px; }
+    #ui button, #ui select { padding: 8px 10px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="viz"></canvas>
+<div id="ui">
+  <button id="trbtn">Écouter</button>
+  <select id="mstyle">
+    <option value="serieuse">Mega sérieuse</option>
+    <option value="normale" selected>Normale</option>
+    <option value="fun">Fun</option>
+  </select>
+  <button id="fsbtn">Plein écran</button>
+  <span id="status">En pause</span>
+</div>
+<div id="pads"><button data-k="Tab">Écouter</button><button data-k="r">Reset</button><button data-k="t">Figer</button><button data-k="d">Couleurs</button><button data-k="i">Onde</button><button data-k="n">Flash</button><button data-k="u">Négatif</button><button data-k=" ">Strobe</button><button data-k="y">Scanlines</button></div>
+<div id="keymap"><b>Tab</b> Écouter on/off<br><b>R</b> Reset (vide le nuage)<br><b>T</b> Figer<br><b>D</b> Couleur des mots<br><b>I</b> Onde de choc<br><b>N</b> Flash<br><b>U</b> Négatif<br><b>Y</b> Scanlines<br><b>Esp</b> Strobe<br><b>Ent</b> Miroir<br><b>←→</b> Teinte<br><b>↑↓</b> Zoom<br><b>P</b> Plein écran<br><b>O</b> Interface<br><b>M</b> Ce mémo</div>
+<div id="hint">Tape « Écouter », autorise le micro, et parle : tes mots deviennent le visuel. Les mots répétés grossissent. Touche M : mémo.</div>
+<script>
+
+const cvEl = document.getElementById('viz');
+const cv = cvEl;
+const ctx = cv.getContext('2d');
+let W, H, CX, CY;
+const off = document.createElement('canvas');
+const octx = off.getContext('2d');
+let t = 0;
+const status = document.getElementById('status');
+const ui = document.getElementById('ui');
+const hint = document.getElementById('hint');
+function smooth(k) { return k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k); }
+document.getElementById('fsbtn').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+};
+let hideTimer = null;
+const padsEl = document.getElementById('pads');
+function hideUI() {
+  ui.classList.add('hidden');
+  hint.classList.add('hidden');
+  if (padsEl) padsEl.classList.add('hidden');
+}
+function showUI() {
+  ui.classList.remove('hidden');
+  hint.classList.remove('hidden');
+  if (padsEl) padsEl.classList.remove('hidden');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    if (recogOn || document.fullscreenElement) hideUI();
+  }, document.fullscreenElement ? 1500 : 3500);
+}
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement) { clearTimeout(hideTimer); hideUI(); } else showUI();
+});
+window.addEventListener('mousemove', showUI);
+window.addEventListener('touchstart', showUI);
+showUI();
+function press(key) { window.dispatchEvent(new KeyboardEvent('keydown', { key: key })); }
+document.querySelectorAll('#pads button').forEach(b => {
+  b.addEventListener('click', (e) => { e.preventDefault(); press(b.dataset.k); });
+});
+
+// ---------- PAROLES MATRIX — la parole est la seule matière ----------
+const MX = ['#00FF41', '#00CC33', '#5CFF85', '#00E63A', '#00FF41'];
+const PP = [[230,0,126],[243,146,0],[255,213,0],[0,150,64],[0,165,200],[91,79,224],[227,6,19],[143,39,181]];
+const modes = { txt: 0, scan: false };
+const TXT_NAMES = ['Mots verts', 'Mots blancs', 'Mots multicolores'];
+const MSTYLES = {
+  serieuse: { label: 'Mega sérieuse', pop: 0.5, rain: 0.35, cloud: 0.7, trail: 0.5, hueAuto: 0, big: false, shock: false },
+  normale: { label: 'Normale', pop: 1, rain: 1, cloud: 1, trail: 1, hueAuto: 0, big: true, shock: false },
+  fun: { label: 'Fun', pop: 1.7, rain: 1.6, cloud: 1.35, trail: 1.5, hueAuto: 0.14, big: true, shock: true }
+};
+let MS = MSTYLES.normale, autoHue = 0, hueShift = 0, camZoom = 1, mirror = false;
+let flashT = 0, invertT = 0, strobeT = 0, shocks = [], scanPat = null, shockCool = 0;
+let speechE = 0, wordKick = 0;
+const STOP = new Set(('le la les un une des de du d au aux en dans pour par sur avec sans sous que qui quoi dont où ne pas plus '
++ 'ce cette ces cet il elle on nous vous ils elles je tu me te se son sa ses mon ma mes ton ta tes notre votre leur leurs '
++ 'est sont était étaient être avoir fait faire ai as a avons avez ont c est il y a et ou mais donc or ni car si comme '
++ 'alors aussi ça cela très bien tout tous toute toutes rien quelque chose peu beaucoup moins encore déjà jamais toujours '
++ 'oui non voilà donc alors euh ben bah hein quand même parce').split(' '));
+
+function setMStyle(name) {
+  if (!MSTYLES[name]) return;
+  MS = MSTYLES[name];
+  const sel = document.getElementById('mstyle');
+  if (sel && sel.value !== name) sel.value = name;
+  fxLabel('Style : ' + MS.label);
+}
+function ppc(i) { const c = PP[i % 8]; return `rgb(${c[0]},${c[1]},${c[2]})`; }
+function wcolor(band) {
+  if (modes.txt === 1) return '#FFFFFF';
+  if (modes.txt === 2) return ppc(band);
+  return MX[band % 5];
+}
+
+function resize() {
+  W = cv.width = window.innerWidth;
+  H = cv.height = window.innerHeight;
+  CX = W / 2; CY = H / 2;
+  off.width = W; off.height = H;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  initStreams();
+}
+window.addEventListener('resize', resize);
+function hardReset() {
+  cloud = []; wordCount = {}; recent = []; pops = []; transcript = []; interim = '';
+  initStreams();
+}
+
+// ---------- DONNÉES : mots entendus ----------
+let wordCount = {}, cloud = [], recent = [], pops = [];
+function normWord(w) {
+  return w.toLowerCase().replace(/[^a-zàâäéèêëîïôöùûüç'-]/g, '');
+}
+function feedWords(txt) {
+  const words = txt.split(/\s+/).map(normWord).filter(w => w.length > 1);
+  for (const w of words) {
+    recent.push(w);
+    if (recent.length > 90) recent.shift();
+    speechE = Math.min(1.4, speechE + 0.35);
+    wordKick = 1;
+    if (w.length < 4 || STOP.has(w)) continue;
+    wordCount[w] = (wordCount[w] || 0) + 1;
+    let entry = cloud.find(c => c.w === w);
+    if (entry) {
+      entry.n = wordCount[w];
+      entry.pop = 1;
+    } else {
+      cloud.push({
+        w: w, n: wordCount[w], pop: 1,
+        x: W * 0.12 + Math.random() * W * 0.76,
+        y: H * 0.15 + Math.random() * H * 0.7,
+        vx: (Math.random() - 0.5) * 0.3, vy: (Math.random() - 0.5) * 0.3,
+        band: Math.floor(Math.random() * 8), ph: Math.random() * Math.PI * 2
+      });
+      if (cloud.length > 26) {
+        cloud.sort((a, b) => a.n - b.n);
+        cloud.shift();
+      }
+    }
+    if (MS.big && w.length > 5) {
+      pops.push({ txt: w, life: 1, band: Math.floor(Math.random() * 8) });
+      if (pops.length > 3) pops.shift();
+    }
+  }
+  // injecter dans la pluie
+  for (const w of words) {
+    if (streams.length) {
+      const st = streams[Math.floor(Math.random() * streams.length)];
+      st.str = (w + ' ' + st.str).slice(0, 300);
+    }
+  }
+  if (MS.shock && shockCool === 0) { shocks.push({ r: 10 }); shockCool = 120; }
+}
+
+// ---------- PLUIE : les mots dits tombent ----------
+let streams = [];
+function initStreams() {
+  streams = [];
+  const n = Math.max(4, Math.floor(W / 60));
+  for (let i = 0; i < n; i++) {
+    streams.push({
+      x: (i + 0.5) * (W / n) + (Math.random() - 0.5) * 14,
+      y: Math.random() * H * 2 - H,
+      sp: 1.2 + Math.random() * 3.2,
+      str: '· · · · · ',
+      idx: 0,
+      len: 8 + Math.floor(Math.random() * 14),
+      band: i % 8,
+      pc: PP[i % 8]
+    });
+  }
+}
+function drawStreams(amount) {
+  if (amount < 0.02 || !streams.length) return;
+  const CH = 13;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '400 11px "Courier New", monospace';
+  for (const st of streams) {
+    st.y += st.sp * (0.25 + speechE * 1.4) ;
+    if (st.y - st.len * CH > H + 20) {
+      st.y = -Math.random() * H * 0.4;
+      if (recent.length > 4) {
+        const start = Math.floor(Math.random() * Math.max(1, recent.length - 8));
+        st.str = recent.slice(start, start + 12).join(' ') + ' ';
+      }
+    }
+    for (let k = 0; k < st.len; k++) {
+      const cy2 = st.y - k * CH;
+      if (cy2 < -CH || cy2 > H + CH) continue;
+      const chIdx = (st.idx + Math.floor(st.y / CH) - k) % st.str.length;
+      const chr = st.str[(chIdx + st.str.length) % st.str.length];
+      if (chr === ' ') continue;
+      const fade = 1 - k / st.len;
+      if (k === 0) {
+        ctx.fillStyle = `rgba(230,255,235,${amount * 0.85})`;
+      } else if (modes.txt === 1) {
+        ctx.fillStyle = `rgba(235,235,235,${amount * fade * fade * 0.55})`;
+      } else if (modes.txt === 2) {
+        ctx.fillStyle = `rgba(${st.pc[0]},${st.pc[1]},${st.pc[2]},${amount * fade * fade * 0.65})`;
+      } else {
+        ctx.fillStyle = `rgba(0,255,65,${amount * fade * fade * 0.6})`;
+      }
+      ctx.fillText(chr, st.x, cy2);
+    }
+  }
+}
+
+// ---------- NUAGE DE MOTS VIVANT ----------
+function drawCloud() {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const c of cloud) {
+    c.pop *= 0.94;
+    c.x += c.vx * (0.4 + speechE * 0.8) + Math.sin(t * 0.5 + c.ph) * 0.25;
+    c.y += c.vy * (0.4 + speechE * 0.8) + Math.cos(t * 0.4 + c.ph) * 0.2;
+    if (c.x < 60) c.vx = Math.abs(c.vx);
+    if (c.x > W - 60) c.vx = -Math.abs(c.vx);
+    if (c.y < 70) c.vy = Math.abs(c.vy);
+    if (c.y > H - 60) c.vy = -Math.abs(c.vy);
+    const fs = Math.min(W * 0.09, (15 + Math.sqrt(c.n) * 17) * MS.cloud * (1 + c.pop * 0.5));
+    ctx.font = (c.n > 2 ? '700 ' : '400 ') + Math.round(fs) + 'px "Courier New", monospace';
+    ctx.fillStyle = wcolor(c.band);
+    ctx.globalAlpha = Math.min(0.95, 0.4 + Math.sqrt(c.n) * 0.14 + c.pop * 0.4);
+    ctx.fillText(c.w, c.x, c.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- POP DU MOT COURANT ----------
+function drawPops() {
+  pops = pops.filter(p => p.life > 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const p of pops) {
+    p.life -= 0.009;
+    const popIn = smooth((1 - p.life) / 0.08);
+    const fs = Math.min(W * 0.11, 84) * popIn * MS.pop;
+    ctx.font = '700 ' + Math.round(fs) + 'px "Courier New", monospace';
+    ctx.fillStyle = wcolor(p.band);
+    ctx.globalAlpha = Math.min(1, p.life * 3) * 0.5;
+    ctx.fillText(p.txt.toUpperCase(), CX, H * 0.2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- TRANSCRIPTION ----------
+let recog = null, recogOn = false, transcript = [], interim = '', trErr = '', trLastResult = 0;
+const isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+function buildRecog() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const r = new SR();
+  r.lang = 'fr-FR';
+  r.continuous = !isCoarse;
+  r.interimResults = true;
+  r.onresult = (ev) => {
+    interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      if (res.isFinal) {
+        const txt = res[0].transcript.trim();
+        if (txt) {
+          transcript.push(txt);
+          if (transcript.length > 40) transcript.shift();
+          feedWords(txt);
+        }
+      } else {
+        interim += res[0].transcript;
+        speechE = Math.min(1.4, speechE + 0.06);
+      }
+    }
+    trLastResult = Date.now();
+    trErr = '';
+  };
+  r.onsoundstart = () => { speechE = Math.min(1.4, speechE + 0.3); trLastResult = Date.now(); };
+  r.onstart = () => { trLastResult = Date.now(); };
+  r.onend = () => {
+    if (!recogOn) return;
+    setTimeout(() => {
+      if (!recogOn) return;
+      try { recog.start(); }
+      catch (e) {
+        try { recog = buildRecog(); recog.start(); }
+        catch (e2) { trErr = 'Reconnaissance interrompue — retape Écouter'; recogOn = false; }
+      }
+    }, 300);
+  };
+  r.onerror = (ev) => {
+    const msgs = {
+      'not-allowed': 'Micro refusé — cadenas dans la barre Chrome → Autorisations → Micro',
+      'service-not-allowed': 'Service vocal bloqué — vérifie les Services Google de reconnaissance vocale',
+      'language-not-supported': 'Français non disponible sur ce téléphone',
+      'audio-capture': 'Micro indisponible (occupé par une autre app ?)',
+      'network': 'Réseau requis pour la reconnaissance vocale',
+      'no-speech': '',
+      'aborted': ''
+    };
+    const m = msgs[ev.error] !== undefined ? msgs[ev.error] : 'Erreur : ' + ev.error;
+    if (m) { trErr = m; fxLabel(m); }
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') recogOn = false;
+  };
+  return r;
+}
+function restartRecog() {
+  try { recog.stop(); } catch (_) {}
+  setTimeout(() => {
+    if (!recogOn) return;
+    try { recog = buildRecog(); recog.start(); trLastResult = Date.now(); }
+    catch (e) { trErr = 'Reconnaissance interrompue — retape Écouter'; recogOn = false; }
+  }, 350);
+}
+function toggleTranscript() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { fxLabel('Reconnaissance vocale non supportée (utilise Chrome)'); return; }
+  if (recogOn) {
+    recogOn = false;
+    try { recog.stop(); } catch (_) {}
+    fxLabel('Écoute arrêtée');
+    status.textContent = 'En pause';
+    return;
+  }
+  recog = buildRecog();
+  try {
+    recog.start();
+    recogOn = true;
+    trErr = '';
+    trLastResult = Date.now();
+    fxLabel('Écoute active — parle');
+    status.textContent = 'Écoute active';
+  } catch (err) { trErr = 'Impossible de démarrer'; fxLabel(trErr); }
+}
+const trbtn = document.getElementById('trbtn');
+if (trbtn) trbtn.onclick = () => { toggleTranscript(); trbtn.classList.toggle('active', recogOn); };
+const mstyleSel = document.getElementById('mstyle');
+if (mstyleSel) mstyleSel.onchange = () => setMStyle(mstyleSel.value);
+
+function drawRecState() {
+  if (!recogOn && !trErr) return;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  if (recogOn) {
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 400);
+    ctx.fillStyle = `rgba(255,60,60,${0.4 + pulse * 0.6})`;
+    ctx.beginPath();
+    ctx.arc(24, 70, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = '600 13px system-ui';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    const since = Date.now() - trLastResult;
+    if (since > 15000) { restartRecog(); trLastResult = Date.now(); }
+    ctx.fillText(since > 9000 ? 'REC — en attente de voix…' : 'REC', 40, 70);
+  }
+  if (trErr) {
+    ctx.font = '600 13px system-ui';
+    ctx.fillStyle = 'rgba(255,120,120,0.95)';
+    ctx.fillText(trErr, 40, recogOn ? 92 : 70);
+  }
+}
+function drawTranscript() {
+  if (!recogOn) return;
+  const raw = (transcript.slice(-2).join('  ') + '  ' + interim).trim();
+  if (!raw) return;
+  ctx.font = '400 19px "Courier New", monospace';
+  const maxW = W - 80;
+  const words = raw.split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
+    else cur = test;
+  }
+  if (cur) lines.push(cur);
+  const show = lines.slice(-2);
+  const lh = 30;
+  let boxW = 0;
+  for (const l of show) boxW = Math.max(boxW, ctx.measureText(l).width);
+  boxW += 56;
+  const boxH = show.length * lh + 26;
+  const bx = CX - boxW / 2, by = CY - boxH / 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, boxW, boxH, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,255,65,0.3)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < show.length; i++) {
+    const isLast = i === show.length - 1;
+    ctx.fillStyle = isLast && interim ? 'rgba(220,255,230,0.95)' : 'rgba(0,255,65,0.85)';
+    ctx.fillText(show[i], CX, by + 13 + lh / 2 + i * lh);
+  }
+}
+
+// ---------- BOUCLE ----------
+resize();
+ctx.fillStyle = 'rgba(255,255,255,0.4)';
+ctx.font = '15px system-ui';
+ctx.textAlign = 'center';
+ctx.fillText('Tape « Écouter » et parle — tes mots deviennent le visuel', CX, CY);
+
+let started = false;
+function loop() {
+  requestAnimationFrame(loop);
+  if (!recogOn && !started) return;
+  started = true;
+  if (fx.freeze) return;
+  speechE *= 0.965;
+  wordKick *= 0.88;
+  t += 0.008 + speechE * 0.03;
+  if (shockCool > 0) shockCool--;
+  autoHue = (autoHue + MS.hueAuto) % 360;
+  const totalHue = Math.round((hueShift + autoHue) % 360);
+  const wantF = totalHue ? `hue-rotate(${totalHue}deg)` : '';
+  if (cv.style.filter !== wantF) cv.style.filter = wantF;
+
+  octx.clearRect(0, 0, W, H);
+  octx.drawImage(cv, 0, 0);
+  ctx.fillStyle = '#040704';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.globalAlpha = Math.min(0.8, (0.15 + speechE * 0.4) * MS.trail);
+  ctx.translate(0, 1.2 + speechE * 2);
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(CX, CY);
+  if (mirror) ctx.scale(-1, 1);
+  const pulse = camZoom * (1 + wordKick * 0.02);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-CX, -CY);
+
+  drawStreams(Math.min(1, (0.25 + speechE * 0.8) * MS.rain));
+  drawCloud();
+  drawPops();
+
+  const diag = Math.hypot(W, H) * 0.6;
+  shocks = shocks.filter(sh => sh.r < diag);
+  for (const sh of shocks) {
+    sh.r += 14;
+    const a = 1 - sh.r / diag;
+    ctx.strokeStyle = `rgba(0,255,65,${a * 0.8})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(CX, CY, sh.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  if (modes.scan) {
+    if (!scanPat) {
+      const c2 = document.createElement('canvas');
+      c2.width = 1; c2.height = 3;
+      const x2 = c2.getContext('2d');
+      x2.fillStyle = 'rgba(0,0,0,0.45)';
+      x2.fillRect(0, 0, 1, 1);
+      scanPat = ctx.createPattern(c2, 'repeat');
+    }
+    ctx.fillStyle = scanPat;
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (strobeT > 0) {
+    strobeT--;
+    if (Math.floor(strobeT / 3) % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+  if (invertT > 0) {
+    invertT--;
+    ctx.save();
+    ctx.globalCompositeOperation = 'difference';
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(1, invertT / 8)})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+  if (flashT > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${(flashT / 14) * 0.92})`;
+    ctx.fillRect(0, 0, W, H);
+    flashT--;
+  }
+  drawTranscript();
+  drawRecState();
+  if (fx.labelT > 0) {
+    fx.labelT--;
+    ctx.font = '600 16px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(1, fx.labelT / 30) * 0.8})`;
+    ctx.fillText(fx.label, 20, H - 24);
+  }
+}
+const fx = { freeze: false, label: '', labelT: 0 };
+function fxLabel(nm) { fx.label = nm; fx.labelT = 100; }
+loop();
+
+// ---------- CLAVIER ----------
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' && e.target.type === 'file') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'tab' || k.startsWith('arrow')) e.preventDefault();
+  if (k === 'tab') { toggleTranscript(); return; }
+  if (k === 'r') { hardReset(); fxLabel('Reset — nuage vidé'); }
+  else if (k === 't') { fx.freeze = !fx.freeze; fxLabel(fx.freeze ? 'Figé' : 'Reprise'); }
+  else if (k === 'd') { modes.txt = (modes.txt + 1) % 3; fxLabel(TXT_NAMES[modes.txt]); }
+  else if (k === 'y') { modes.scan = !modes.scan; fxLabel(modes.scan ? 'Scanlines' : 'Scanlines off'); }
+  else if (k === 'n') { flashT = 14; fxLabel('Flash'); }
+  else if (k === 'u') { invertT = 45; fxLabel('Négatif'); }
+  else if (k === 'i') { shocks.push({ r: 10 }); fxLabel('Onde de choc'); }
+  else if (k === ' ') { strobeT = 24; fxLabel('Strobe'); }
+  else if (k === 'enter') { mirror = !mirror; fxLabel(mirror ? 'Miroir' : 'Miroir off'); }
+  else if (k === 'p') { document.getElementById('fsbtn').click(); }
+  else if (k === 'o') { ui.classList.toggle('hidden'); }
+  else if (k === 'm') { document.getElementById('keymap').classList.toggle('show'); }
+  else if (k === 'arrowright') { hueShift = (hueShift + 20) % 360; fxLabel('Teinte +' + hueShift + '°'); }
+  else if (k === 'arrowleft') { hueShift = (hueShift + 340) % 360; fxLabel('Teinte +' + hueShift + '°'); }
+  else if (k === 'arrowup') { camZoom = Math.min(2, camZoom + 0.1); fxLabel('Zoom ' + camZoom.toFixed(1)); }
+  else if (k === 'arrowdown') { camZoom = Math.max(0.5, camZoom - 0.1); fxLabel('Zoom ' + camZoom.toFixed(1)); }
+});
+</script>
+</body>
+</html>
