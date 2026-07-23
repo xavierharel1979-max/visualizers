@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tableur Matrix</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #ui {
+    position: fixed; top: 16px; left: 16px; right: 16px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    transition: opacity 0.4s; z-index: 10;
+  }
+  #ui.hidden { opacity: 0; pointer-events: none; }
+  button, input[type=range] {
+    background: rgba(20,20,20,0.85); color: #ddd; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: rgba(45,45,45,0.9); }
+  button.active { border-color: rgba(255,255,255,0.6); color: #fff; }
+  input[type=range] { padding: 0; height: 32px; width: 120px; }
+  label { color: rgba(255,255,255,0.5); font-size: 12px; }
+  .sep { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
+  #status { color: rgba(255,255,255,0.45); font-size: 12px; margin-left: auto; }
+  #hint {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    color: rgba(255,255,255,0.35); font-size: 13px; text-align: center; max-width: 90vw;
+    transition: opacity 0.4s; z-index: 10;
+  }
+  #hint.hidden { opacity: 0; }
+  input[type=file] { display: none; }
+
+  #keymap {
+    position: fixed; top: 70px; left: 16px;
+    background: rgba(0,0,0,0.88); border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px; padding: 14px 20px; color: #ccc;
+    font-size: 12.5px; line-height: 1.75; z-index: 20; display: none;
+    columns: 3; column-gap: 26px;
+  }
+  #keymap.show { display: block; }
+  #keymap b { color: #fff; display: inline-block; min-width: 26px; }
+  select {
+    background: rgba(20,20,20,0.85); color: #ddd; border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px; padding: 8px 10px; font-size: 13px; cursor: pointer;
+  }
+  #pads {
+    position: fixed; bottom: 12px; left: 8px; right: 8px;
+    display: none; flex-wrap: wrap; gap: 6px; justify-content: center;
+    transition: opacity 0.4s; z-index: 10;
+  }
+  #pads.hidden { opacity: 0; pointer-events: none; }
+  #pads button {
+    min-width: 62px; min-height: 44px; padding: 6px 8px; font-size: 12px;
+    background: rgba(15,15,15,0.9);
+  }
+  @media (pointer: coarse) {
+    #pads { display: flex; }
+    #hint { display: none; }
+    #ui { gap: 6px; }
+    #ui button, #ui select { padding: 8px 10px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="viz"></canvas>
+<div id="ui">
+  <button id="tabbtn">Capturer un onglet</button>
+  <button id="micbtn">Micro</button>
+  <button id="audiobtn">Audio</button>
+  <input type="file" id="afile" accept="audio/*">
+  <button id="playbtn" style="display:none">Pause</button>
+  <div class="sep"></div>
+  <button id="xlsbtn">Fichiers</button>
+  <input type="file" id="xfile" accept=".xlsx,.xls,.csv,.txt,.md,.docx,.pdf" multiple>
+  <button id="trbtn">Transcript</button>
+  <select id="mstyle">
+    <option value="serieuse">Mega sérieuse</option>
+    <option value="normale" selected>Normale</option>
+    <option value="fun">Fun</option>
+  </select>
+  <div class="sep"></div>
+  <label>Sensibilité</label>
+  <input type="range" id="sens" min="0.5" max="3" step="0.1" value="1.4">
+  <button id="fsbtn">Plein écran</button>
+  <span id="status">Aucune source audio</span>
+</div>
+<div id="pads"><button data-k="a">Recomp</button><button data-k="z">Chaos</button><button data-k="e">Boom</button><button data-k="r">Reset</button><button data-k="t">Figer</button><button data-k=" ">Strobe</button><button data-k="n">Flash</button><button data-k="u">Négatif</button><button data-k="i">Onde</button><button data-k="j">Rafale</button><button data-k="c">Rideau</button><button data-k="d">Chiffres</button><button data-k="k">Bordures</button><button data-k="l">Fonds</button><button data-k="0">Doc +</button></div>
+<div id="keymap"><b>A</b> Recomposition<br><b>Z</b> Chaos<br><b>E</b> Explosion<br><b>R</b> Reset<br><b>T</b> Figer<br><b>W</b> Ralenti<br><b>X</b> Accéléré<br><b>S/Q</b> Sensibilité ±<br><b>P</b> Plein écran<br><b>O</b> Interface<br><b>M</b> Ce mémo<br><b>Tab</b> Transcript on/off<br><b>F</b> Tout lâche<br><b>G</b> Rappel général<br><b>H</b> Pluie inversée<br><b>J</b> Rafale<br><b>B</b> Flash pluie<br><b>V</b> Vague<br><b>C</b> Rideau<br><b>D</b> Couleur chiffres<br><b>K</b> Couleur bordures<br><b>L</b> Couleur fonds<br><b>N</b> Flash blanc<br><b>U</b> Négatif<br><b>Y</b> Scanlines<br><b>I</b> Onde de choc<br><b>Esp</b> Strobe<br><b>Ent</b> Miroir<br><b>←→</b> Teinte<br><b>↑↓</b> Zoom<br><b>1-9</b> Fichier n<br><b>0</b> Fichier suivant</div>
+<div id="hint">Réunion : choisis le style, clique Micro puis Transcript. Charge Excel, CSV, TXT, Word ou PDF. Touche M : mémo.</div>
+<script>
+const cv = document.getElementById('viz');
+const ctx = cv.getContext('2d');
+let W, H, CX, CY;
+const off = document.createElement('canvas');
+const octx = off.getContext('2d');
+
+let actx = null, analyser = null, srcNode = null, audioEl = null, playing = false, micStream = null;
+let freq = null, wave = null, hue = 0, t = 0, bassAvg = 0, gKick = 0;
+let decomp = 0, silFrames = 0, intensity = 0;
+
+const status = document.getElementById('status');
+const sens = document.getElementById('sens');
+const playbtn = document.getElementById('playbtn');
+const ui = document.getElementById('ui');
+const hint = document.getElementById('hint');
+
+function ensureCtx() {
+  if (!actx) {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.82;
+    freq = new Uint8Array(analyser.frequencyBinCount);
+    wave = new Uint8Array(analyser.fftSize);
+  }
+  actx.resume();
+}
+function disconnectSrc() {
+  if (srcNode) { try { srcNode.disconnect(); } catch(_) {} srcNode = null; }
+  if (audioEl) { audioEl.pause(); audioEl = null; playbtn.style.display = 'none'; }
+  ['tabbtn','micbtn','audiobtn'].forEach(id => document.getElementById(id).classList.remove('active'));
+}
+document.getElementById('tabbtn').onclick = async () => {
+  try {
+    ensureCtx();
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    if (stream.getAudioTracks().length === 0) {
+      stream.getTracks().forEach(tr => tr.stop());
+      status.textContent = "Pas d'audio — coche « Partager l'audio »";
+      return;
+    }
+    stream.getVideoTracks().forEach(tr => tr.stop());
+    disconnectSrc();
+    srcNode = actx.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+    document.getElementById('tabbtn').classList.add('active');
+    status.textContent = 'Audio capturé';
+    decomp = 0; hardReset();
+  } catch (err) { status.textContent = 'Capture annulée'; }
+};
+document.getElementById('micbtn').onclick = async () => {
+  try {
+    ensureCtx();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    disconnectSrc();
+    micStream = stream;
+    srcNode = actx.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+    document.getElementById('micbtn').classList.add('active');
+    status.textContent = 'Micro actif';
+    decomp = 0; hardReset();
+  } catch (err) { status.textContent = 'Micro refusé'; }
+};
+document.getElementById('audiobtn').onclick = () => document.getElementById('afile').click();
+document.getElementById('afile').onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  ensureCtx();
+  disconnectSrc();
+  audioEl = new Audio(URL.createObjectURL(f));
+  audioEl.loop = true;
+  srcNode = actx.createMediaElementSource(audioEl);
+  srcNode.connect(analyser);
+  analyser.connect(actx.destination);
+  audioEl.play();
+  playing = true;
+  playbtn.style.display = '';
+  playbtn.textContent = 'Pause';
+  document.getElementById('audiobtn').classList.add('active');
+  status.textContent = f.name.length > 30 ? f.name.slice(0, 28) + '…' : f.name;
+  decomp = 0; hardReset();
+};
+playbtn.onclick = () => {
+  if (!audioEl) return;
+  if (playing) { audioEl.pause(); playing = false; playbtn.textContent = 'Lecture'; }
+  else { actx.resume(); audioEl.play(); playing = true; playbtn.textContent = 'Pause'; }
+};
+document.getElementById('fsbtn').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen();
+};
+let hideTimer = null;
+const padsEl = document.getElementById('pads');
+function hideUI() {
+  ui.classList.add('hidden');
+  hint.classList.add('hidden');
+  if (padsEl) padsEl.classList.add('hidden');
+}
+function showUI() {
+  ui.classList.remove('hidden');
+  hint.classList.remove('hidden');
+  if (padsEl) padsEl.classList.remove('hidden');
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    if (analyser || document.fullscreenElement) hideUI();
+  }, document.fullscreenElement ? 1500 : 3000);
+}
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement) { clearTimeout(hideTimer); hideUI(); } else showUI();
+});
+window.addEventListener('mousemove', showUI);
+window.addEventListener('touchstart', showUI);
+showUI();
+
+function smooth(k) { return k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k); }
+function bands() {
+  const n = freq.length;
+  let b = 0, m = 0, h2 = 0;
+  const bN = Math.floor(n * 0.06), mN = Math.floor(n * 0.35);
+  for (let i = 0; i < bN; i++) b += freq[i];
+  for (let i = bN; i < mN; i++) m += freq[i];
+  for (let i = mN; i < n; i++) h2 += freq[i];
+  return [b / bN / 255, m / (mN - bN) / 255, h2 / (n - mN) / 255];
+}
+function band8(k) {
+  const bin = Math.floor(Math.pow(k / 8, 1.5) * freq.length * 0.6);
+  return freq[bin] / 255;
+}
+function stepDecomp(bass, mid, high, s) {
+  const totE = bass + mid + high;
+  intensity = intensity * 0.985 + (bass * 0.5 + mid * 0.35 + high * 0.15) * 0.015;
+  if (totE < 0.03) silFrames++; else silFrames = 0;
+  if (silFrames > 45) {
+    decomp = Math.max(0, decomp - 0.012);
+  } else {
+    let drive = (intensity * s * 1.5 - 0.42) * 0.0006;
+    if (drive < 0) drive *= 3;
+    decomp = Math.max(0, Math.min(1, decomp + drive + gKick * 0.0012));
+  }
+}
+
+function press(key) {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: key }));
+}
+document.querySelectorAll('#pads button').forEach(b => {
+  b.addEventListener('click', (e) => { e.preventDefault(); press(b.dataset.k); });
+});
+
+// ---------- TABLEUR MATRIX — tout vient du fichier ----------
+const MX = ['#00FF41', '#00CC33', '#5CFF85', '#00E63A', '#00FF41'];
+const PP = [[230,0,126],[243,146,0],[255,213,0],[0,150,64],[0,165,200],[91,79,224],[227,6,19],[143,39,181]];
+const modes = { txt: 0, border: 0, fill: 0, scan: false };
+const TXT_NAMES = ['Chiffres verts', 'Chiffres blancs', 'Chiffres multicolores'];
+const BORDER_NAMES = ['Bordures blanches', 'Bordures vertes', 'Bordures multicolores', 'Bordures invisibles'];
+const FILL_NAMES = ['Fonds transparents', 'Fonds verts', 'Fonds multicolores', 'Fonds noirs'];
+let flashT = 0, invertT = 0, shocks = [], scanPat = null;
+let sources = [], curSheet = -1, strobeT = 0, hueShift = 0, camZoom = 1, mirror = false;
+let recog = null, recogOn = false, transcript = [], interim = '', wordFloat = [], bigWords = [];
+let speechMode = false, speechE = 0;
+const isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+const MSTYLES = {
+  serieuse: { label: 'Mega sérieuse', cap: 0.32, drive: 0.55, rain: 0.3, kick: 0.35, trail: 0.55, speed: 0.6, words: 0.4, wordsz: 0.7, hueAuto: 0, bigWords: false, autoShock: false },
+  normale: { label: 'Normale', cap: 1, drive: 1, rain: 1, kick: 1, trail: 1, speed: 1, words: 1, wordsz: 1, hueAuto: 0, bigWords: false, autoShock: false },
+  fun: { label: 'Fun', cap: 1, drive: 1.6, rain: 1.5, kick: 1.8, trail: 1.45, speed: 1.4, words: 1.6, wordsz: 1.5, hueAuto: 0.14, bigWords: true, autoShock: true }
+};
+let MS = MSTYLES.normale, autoHue = 0, shockCool = 0;
+function setMStyle(name) {
+  if (!MSTYLES[name]) return;
+  MS = MSTYLES[name];
+  const sel = document.getElementById('mstyle');
+  if (sel && sel.value !== name) sel.value = name;
+  fxLabel('Réunion : ' + MS.label);
+}
+function toggleTranscript() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { fxLabel('Reconnaissance vocale non supportée (utilise Chrome)'); return; }
+  if (recogOn) {
+    recogOn = false;
+    speechMode = false;
+    try { recog.stop(); } catch (_) {}
+    fxLabel(isCoarse ? 'Transcript off — reclique Micro pour les visuels' : 'Transcript off');
+    return;
+  }
+  if (isCoarse) {
+    // Android : le micro ne peut pas être partagé — la reconnaissance le prend,
+    // et la parole elle-même pilote les visuels
+    if (micStream) { micStream.getTracks().forEach(tr => tr.stop()); micStream = null; }
+    ensureCtx();
+    speechMode = true;
+  }
+  recog = new SR();
+  recog.lang = 'fr-FR';
+  recog.continuous = true;
+  recog.interimResults = true;
+  recog.onresult = (ev) => {
+    interim = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) {
+        const txt = r[0].transcript.trim();
+        if (txt) {
+          transcript.push(txt);
+          if (transcript.length > 40) transcript.shift();
+          feedWords(txt);
+        }
+      } else {
+        interim += r[0].transcript;
+      }
+    }
+    if (speechMode) speechE = Math.min(1.3, speechE + 0.5);
+  };
+  recog.onsoundstart = () => { if (speechMode) speechE = Math.min(1.3, speechE + 0.4); };
+  recog.onend = () => { if (recogOn) { try { recog.start(); } catch (_) {} } };
+  recog.onerror = (ev) => {
+    const msgs = {
+      'not-allowed': 'Micro refusé — autorise-le dans Chrome',
+      'audio-capture': 'Micro indisponible (occupé ?)',
+      'network': 'Réseau requis pour la reconnaissance',
+      'no-speech': ''
+    };
+    const m = msgs[ev.error] !== undefined ? msgs[ev.error] : 'Erreur transcript : ' + ev.error;
+    if (m) fxLabel(m);
+  };
+  try { recog.start(); recogOn = true; fxLabel('Transcript on (fr-FR)'); }
+  catch (err) { fxLabel('Impossible de démarrer le transcript'); }
+}
+function feedWords(txt) {
+  const words = txt.split(/\s+/).filter(w => w.length > 2);
+  if (MS.bigWords) {
+    const big = words.filter(w => w.length > 5);
+    if (big.length) {
+      bigWords.push({ txt: big[Math.floor(Math.random() * big.length)], life: 1, band: Math.floor(Math.random() * 8) });
+      if (bigWords.length > 3) bigWords.shift();
+    }
+  }
+  for (const w of words.slice(0, Math.max(1, Math.round(6 * MS.words)))) {
+    if (streams.length) {
+      const st = streams[Math.floor(Math.random() * streams.length)];
+      st.str = (w + ' ' + st.str).slice(0, 400);
+    }
+    wordFloat.push({
+      txt: w,
+      x: W * 0.1 + Math.random() * W * 0.8,
+      y: H * 0.8,
+      vy: -0.35 - Math.random() * 0.55,
+      band: Math.floor(Math.random() * 8),
+      sz: (13 + Math.random() * 22) * MS.wordsz,
+      life: 1
+    });
+  }
+  if (wordFloat.length > 60) wordFloat.splice(0, wordFloat.length - 60);
+}
+function drawWordFloat(s) {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  wordFloat = wordFloat.filter(w => w.life > 0);
+  for (const w of wordFloat) {
+    const v = band8(w.band) * s;
+    w.y += w.vy * (0.5 + driveS);
+    w.life -= 0.004;
+    ctx.font = '400 ' + Math.round(w.sz * (0.9 + v * 0.3)) + 'px "Courier New", monospace';
+    ctx.fillStyle = modes.txt === 1 ? '#FFFFFF' : (modes.txt === 2 ? ppc(w.band) : '#00FF41');
+    ctx.globalAlpha = Math.min(1, w.life * 2) * (0.45 + v * 0.4);
+    ctx.fillText(w.txt, w.x, w.y);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawBigWords(s) {
+  bigWords = bigWords.filter(b => b.life > 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const b of bigWords) {
+    b.life -= 0.008;
+    const v = band8(b.band) * s;
+    const popIn = smooth((1 - b.life) / 0.08);
+    const fs = Math.min(W * 0.12, 90) * popIn * (0.9 + v * 0.35);
+    ctx.font = '700 ' + Math.round(fs) + 'px "Courier New", monospace';
+    ctx.fillStyle = modes.txt === 2 ? ppc(b.band) : (modes.txt === 1 ? '#FFFFFF' : '#00FF41');
+    ctx.globalAlpha = Math.min(1, b.life * 3) * 0.55;
+    ctx.fillText(b.txt.toUpperCase(), CX, H * 0.22);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawTranscript() {
+  if (!recogOn) return;
+  const raw = (transcript.slice(-2).join('  ') + '  ' + interim).trim();
+  if (!raw) return;
+  ctx.font = '400 19px "Courier New", monospace';
+  const maxW = W - 80;
+  const words = raw.split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
+    else cur = test;
+  }
+  if (cur) lines.push(cur);
+  const show = lines.slice(-2);
+  const lh = 30;
+  let boxW = 0;
+  for (const l of show) boxW = Math.max(boxW, ctx.measureText(l).width);
+  boxW += 56;
+  const boxH = show.length * lh + 26;
+  const bx = CX - boxW / 2, by = CY - boxH / 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, boxW, boxH, 10);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,255,65,0.3)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < show.length; i++) {
+    const isLast = i === show.length - 1;
+    ctx.fillStyle = isLast && interim ? 'rgba(220,255,230,0.95)' : 'rgba(0,255,65,0.85)';
+    ctx.fillText(show[i], CX, by + 13 + lh / 2 + i * lh);
+  }
+}
+function ppc(i) { const c = PP[i % 8]; return `rgb(${c[0]},${c[1]},${c[2]})`; }
+function txtColor(o, funW) {
+  if (modes.txt === 1) return '#FFFFFF';
+  if (modes.txt === 2) return ppc(o.band);
+  return funW < 0.15 ? '#FFFFFF' : o.tc;
+}
+function borderColor(o, funW) {
+  if (modes.border === 1) return '#00FF41';
+  if (modes.border === 2) return ppc(o.band);
+  if (modes.border === 3) return null;
+  return funW < 0.15 ? 'rgba(255,255,255,0.6)' : o.c;
+}
+function fillCell(o, w, h) {
+  if (modes.fill === 0) return;
+  if (modes.fill === 1) ctx.fillStyle = 'rgba(0,64,16,0.5)';
+  else if (modes.fill === 2) { const c = PP[o.band % 8]; ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.3)`; }
+  else ctx.fillStyle = 'rgba(0,0,0,0.85)';
+  ctx.fillRect(-w / 2, -h / 2, w, h);
+}
+let cells = [], cellData = null, vals = [], streams = [];
+let driveS = 0;
+const fx = { reform: 0, chaos: 0, slow: 0, fast: 0, rainUp: 0, rainBoost: 0, white: 0, freeze: false, label: '', labelT: 0 };
+
+function resize() {
+  W = cv.width = window.innerWidth;
+  H = cv.height = window.innerHeight;
+  CX = W / 2; CY = H / 2;
+  off.width = W; off.height = H;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  if (cellData) { buildCells(); initStreams(); }
+}
+window.addEventListener('resize', resize);
+
+document.getElementById('xlsbtn').onclick = () => document.getElementById('xfile').click();
+const mstyleSel = document.getElementById('mstyle');
+if (mstyleSel) mstyleSel.onchange = () => setMStyle(mstyleSel.value);
+const trbtn = document.getElementById('trbtn');
+if (trbtn) trbtn.onclick = () => { toggleTranscript(); trbtn.classList.toggle('active', recogOn); };
+function textToRows(text) {
+  const words = String(text).replace(/\s+/g, ' ').trim().split(' ').filter(w => w);
+  if (!words.length) return null;
+  const cols = 8, rows = [];
+  for (let i = 0; i < words.length && rows.length < 22; i += cols) {
+    rows.push(words.slice(i, i + cols));
+  }
+  return rows;
+}
+async function parseFile(f) {
+  const ext = f.name.toLowerCase().split('.').pop();
+  try {
+    if (ext === 'csv') {
+      const txt = await f.text();
+      return txt.split(/\r?\n/).map(l => l.split(/[;,\t]/));
+    }
+    if (ext === 'txt' || ext === 'md') {
+      return textToRows(await f.text());
+    }
+    if (ext === 'docx') {
+      if (typeof mammoth === 'undefined') {
+        status.textContent = 'Librairie docx non chargée (hors ligne ?)';
+        return null;
+      }
+      const res = await mammoth.extractRawText({ arrayBuffer: await f.arrayBuffer() });
+      return textToRows(res.value);
+    }
+    if (ext === 'pdf') {
+      if (typeof pdfjsLib === 'undefined') {
+        status.textContent = 'Librairie pdf non chargée (hors ligne ?)';
+        return null;
+      }
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+      let text = '';
+      const nPages = Math.min(pdf.numPages, 6);
+      for (let p = 1; p <= nPages; p++) {
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent();
+        text += tc.items.map(it => it.str).join(' ') + ' ';
+        if (text.length > 4000) break;
+      }
+      return textToRows(text);
+    }
+    if (typeof XLSX === 'undefined') {
+      status.textContent = 'Librairie xlsx non chargée (hors ligne ?) — utilise un CSV';
+      return null;
+    }
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf);
+    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false });
+  } catch (err) { status.textContent = 'Lecture impossible : ' + f.name; return null; }
+}
+function useSheet(i) {
+  if (!sources[i]) return;
+  curSheet = i;
+  cellData = sources[i].rows;
+  buildCells();
+  initStreams();
+  const nm = sources[i].name;
+  status.textContent = 'Doc ' + (i + 1) + '/' + sources.length + ' : ' + (nm.length > 20 ? nm.slice(0, 18) + '…' : nm);
+  fxLabel('Fichier ' + (i + 1) + ' — ' + nm);
+}
+document.getElementById('xfile').onchange = async (e) => {
+  const files = Array.from(e.target.files || []);
+  let first = -1;
+  for (const f of files) {
+    const rows = await parseFile(f);
+    if (rows) {
+      sources.push({ name: f.name, rows: rows });
+      if (first < 0) first = sources.length - 1;
+    }
+  }
+  if (first >= 0) useSheet(first);
+};
+
+function buildCells() {
+  const maxC = 12, maxR = 22;
+  const rows = cellData.slice(0, maxR);
+  const nc = Math.min(maxC, Math.max(...rows.map(r => (r || []).length), 1));
+  const nr = rows.length;
+  const cw = Math.min(W * 0.85 / nc, 130);
+  const rh = Math.min(H * 0.8 / nr, 28);
+  const ox = CX - nc * cw / 2, oy = CY - nr * rh / 2;
+  cells = [];
+  vals = [];
+  for (let iy = 0; iy < nr; iy++) for (let ix = 0; ix < nc; ix++) {
+    let txt = (rows[iy] || [])[ix];
+    if (txt === undefined || txt === null || String(txt).trim() === '') continue;
+    txt = String(txt).trim();
+    if (txt.length > 9) txt = txt.slice(0, 8) + '…';
+    vals.push(txt);
+    cells.push({
+      txt: txt, w: cw - 2, h: rh - 2,
+      hx: ox + (ix + 0.5) * cw, hy: oy + (iy + 0.5) * rh,
+      x: 0, y: 0, vx: 0, vy: 0, rot: 0, vr: 0,
+      tx: 0, ty: 0, tvx: 0, tvy: 0, pop: 0,
+      thr: 0.32 + Math.random() * 0.38,
+      tier: 0.6 + Math.pow(Math.random(), 2) * 1.2,
+      band: (ix + iy) % 8,
+      c: MX[(ix * 7 + iy * 3) % 5],
+      tc: Math.random() < 0.12 ? '#FFFFFF' : MX[(ix * 3 + iy * 5) % 5],
+      state: 'home', ax: 0, ay: 0, ar: 0, bx: 0, by: 0, kp: 0
+    });
+  }
+}
+function hardReset() {
+  for (const o of cells) { o.state = 'home'; o.rot = 0; }
+}
+
+// ---------- PLUIE DE DONNÉES : les colonnes du fichier tombent ----------
+function colString(j) {
+  const parts = [];
+  for (const row of cellData) {
+    const v = (row || [])[j];
+    if (v !== undefined && v !== null && String(v).trim() !== '') parts.push(String(v).trim());
+  }
+  let str = parts.join(' ');
+  if (str.length < 20) str = (str + ' ').repeat(4);
+  return str;
+}
+function initStreams() {
+  streams = [];
+  if (!cellData) return;
+  const nCols = Math.max(1, Math.min(12, Math.max(...cellData.slice(0, 5).map(r => (r || []).length), 1)));
+  const n = Math.floor(W / 55);
+  for (let i = 0; i < n; i++) {
+    streams.push({
+      x: (i + 0.5) * (W / n) + (Math.random() - 0.5) * 14,
+      y: Math.random() * H * 2 - H,
+      sp: 1.2 + Math.random() * 3.5,
+      pc: PP[i % 8],
+      str: colString(i % nCols),
+      idx: Math.floor(Math.random() * 50),
+      len: 8 + Math.floor(Math.random() * 16),
+      band: i % 8
+    });
+  }
+}
+function drawStreams(bass, mid, s, amount) {
+  if (amount < 0.02 || !streams.length) return;
+  const CH = 13;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '400 11px "Courier New", monospace';
+  for (const st of streams) {
+    const v = band8(st.band) * s;
+    const dir = fx.rainUp > 0 ? -1 : 1;
+    const boost = fx.rainBoost > 0 ? 3.5 : 1;
+    st.y += dir * st.sp * (0.5 + bass * 1.6 * s + v * 0.6) * (0.1 + driveS) * boost * MS.speed;
+    if (st.y < -30) st.y = H + st.len * CH;
+    if (st.y - st.len * CH > H + 20) {
+      st.y = -Math.random() * H * 0.4;
+      st.idx = Math.floor(Math.random() * st.str.length);
+    }
+    for (let k = 0; k < st.len; k++) {
+      const cy2 = st.y - k * CH;
+      if (cy2 < -CH || cy2 > H + CH) continue;
+      const chIdx = (st.idx + Math.floor(st.y / CH) - k) % st.str.length;
+      const chr = st.str[(chIdx + st.str.length) % st.str.length];
+      if (chr === ' ') continue;
+      const fade = 1 - k / st.len;
+      if (k === 0 || fx.white > 0) {
+        ctx.fillStyle = `rgba(230,255,235,${amount * (0.75 + v * 0.25)})`;
+      } else if (modes.txt === 1) {
+        ctx.fillStyle = `rgba(235,235,235,${amount * fade * fade * (0.45 + v * 0.35)})`;
+      } else if (modes.txt === 2) {
+        ctx.fillStyle = `rgba(${st.pc[0]},${st.pc[1]},${st.pc[2]},${amount * fade * fade * (0.55 + v * 0.4)})`;
+      } else {
+        ctx.fillStyle = `rgba(0,255,65,${amount * fade * fade * (0.5 + v * 0.4)})`;
+      }
+      ctx.fillText(chr, st.x, cy2);
+    }
+  }
+}
+
+// ---------- CELLULES ----------
+function stepCell(o, bass, mid, s) {
+  const v = band8(o.band) * s;
+  if (o.state === 'home') {
+    if (decomp > o.thr + 0.02 || o.fd) {
+      o.fd = false;
+      o.state = 'free';
+      o.x = o.hx; o.y = o.hy;
+      o.tx = o.hx; o.ty = o.hy;
+      const a = Math.atan2(o.hy - CY, o.hx - CX) + (Math.random() - 0.5) * 1.2;
+      const sp = 0.6 + Math.random() * 1.6 + bass * 2 * s;
+      o.vx = Math.cos(a) * sp; o.vy = Math.sin(a) * sp;
+      o.vr = (Math.random() - 0.5) * 0.04;
+      o.tvx = (Math.random() - 0.5) * 0.5;
+      o.tvy = 0.6 + Math.random() * 1.6;
+      o.rot = 0;
+    }
+  } else if (o.state === 'free') {
+    const mv = (0.5 + mid * 1.2 * s) * (0.12 + driveS) * MS.speed;
+    o.x += o.vx * mv;
+    o.y += o.vy * mv;
+    o.rot += o.vr * (0.4 + v);
+    o.tx += o.tvx * mv;
+    o.ty += o.tvy * (mv + o.pop * 3);
+    if (gKick > 0.05) o.pop = 1;
+    o.pop *= 0.9;
+    o.vx *= 0.999; o.vy *= 0.999;
+    if (o.x < -180) o.x = W + 180;
+    if (o.x > W + 180) o.x = -180;
+    if (o.y < -180) o.y = H + 180;
+    if (o.y > H + 180) o.y = -180;
+    if (o.tx < -60) o.tx = W + 60;
+    if (o.tx > W + 60) o.tx = -60;
+    if (o.ty > H + 60) o.ty = -60;
+    if (decomp < o.thr - 0.05) {
+      o.state = 'returning';
+      o.ax = o.x; o.ay = o.y;
+      o.ar = o.rot % (Math.PI * 2);
+      if (o.ar > Math.PI) o.ar -= Math.PI * 2;
+      if (o.ar < -Math.PI) o.ar += Math.PI * 2;
+      o.bx = o.tx; o.by = o.ty;
+      o.kp = 0;
+    }
+  } else {
+    o.kp = Math.min(1, o.kp + 0.014);
+    if (o.kp >= 1) {
+      o.state = 'home';
+    } else if (decomp > o.thr + 0.03) {
+      const k = smooth(o.kp);
+      o.x = o.ax + (o.hx - o.ax) * k;
+      o.y = o.ay + (o.hy - o.ay) * k;
+      o.tx = o.bx + (o.hx - o.bx) * k;
+      o.ty = o.by + (o.hy - o.by) * k;
+      o.rot = o.ar * (1 - k);
+      o.state = 'free';
+      o.vx = (Math.random() - 0.5) * 2; o.vy = (Math.random() - 0.5) * 2;
+      o.tvx = (Math.random() - 0.5) * 0.5; o.tvy = 0.6 + Math.random() * 1.5;
+      o.vr = (Math.random() - 0.5) * 0.04;
+    }
+  }
+  return v;
+}
+function drawHomeCell(o, pulse) {
+  const w = o.w * pulse, h = o.h * pulse;
+  ctx.save();
+  ctx.translate(o.hx, o.hy);
+  fillCell(o, w, h);
+  const bc = modes.border === 0 ? 'rgba(255,255,255,0.55)' : borderColor(o, 0);
+  if (bc) {
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = bc;
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
+  }
+  ctx.font = '400 ' + Math.max(8, Math.round(10 * pulse)) + 'px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = modes.txt === 2 ? ppc(o.band) : '#FFFFFF';
+  ctx.fillText(o.txt, 0, 0);
+  ctx.restore();
+}
+function drawFrame(o, x, y, rot, scale, alpha, funW) {
+  const w = o.w * scale, h = o.h * scale;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.globalAlpha = alpha;
+  fillCell(o, w, h);
+  const bc = borderColor(o, funW);
+  if (bc) {
+    ctx.lineWidth = 0.5 + funW * 0.5;
+    ctx.strokeStyle = bc;
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
+  }
+  ctx.restore();
+}
+function drawLiveTxt(o, x, y, scale, v, funW) {
+  ctx.save();
+  ctx.translate(Math.round(x), Math.round(y));
+  const fs = Math.min(18, Math.max(8, 9 * scale * (1 + funW * 0.4) * (0.9 + v * 0.35) * (1 + o.pop * 0.25)));
+  ctx.font = '400 ' + Math.round(fs) + 'px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = txtColor(o, funW);
+  ctx.globalAlpha = 0.75 + v * 0.25;
+  ctx.fillText(o.txt, 0, 0);
+  ctx.restore();
+}
+
+resize();
+ctx.fillStyle = 'rgba(255,255,255,0.4)';
+ctx.font = '15px system-ui';
+ctx.textAlign = 'center';
+ctx.fillText('Charge un fichier Excel ou CSV, puis une source audio', CX, CY);
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (!analyser) return;
+  if (fx.freeze) return;
+  analyser.getByteFrequencyData(freq);
+  analyser.getByteTimeDomainData(wave);
+  const s = Number(sens.value);
+  let [bass, mid, high] = bands();
+  if (speechMode) {
+    speechE *= 0.93;
+    bass = Math.max(bass, speechE * 0.5);
+    mid = Math.max(mid, speechE * 0.75);
+    high = Math.max(high, speechE * 0.35);
+  }
+  bassAvg = bassAvg * 0.95 + bass * 0.05;
+  gKick = Math.max(0, bass - bassAvg * 1.1);
+  driveS = driveS * 0.88 + Math.min(1, (bass * 0.5 + mid * 0.35 + high * 0.15) * s * 2.2) * 0.12;
+  t += 0.016 * (0.06 + driveS) + mid * 0.02;
+  stepDecomp(bass, mid, high, s * MS.drive);
+  decomp = Math.min(decomp, MS.cap);
+  gKick *= MS.kick;
+  autoHue = (autoHue + MS.hueAuto) % 360;
+  const totalHue = Math.round((hueShift + autoHue) % 360);
+  const wantF = totalHue ? `hue-rotate(${totalHue}deg)` : '';
+  if (cv.style.filter !== wantF) cv.style.filter = wantF;
+  if (shockCool > 0) shockCool--;
+  if (MS.autoShock && gKick > 0.16 && shockCool === 0) { shocks.push({ r: 10 }); shockCool = 90; }
+  if (fx.reform > 0) { decomp = Math.max(0, decomp - 0.02); fx.reform--; }
+  if (fx.chaos > 0) { decomp = Math.min(1, decomp + 0.02); fx.chaos--; }
+  if (fx.slow > 0) { driveS = Math.min(driveS, 0.12); fx.slow--; }
+  if (fx.fast > 0) { driveS = Math.max(driveS, 0.95); fx.fast--; }
+  if (fx.rainUp > 0) fx.rainUp--;
+  if (fx.rainBoost > 0) fx.rainBoost--;
+  if (fx.white > 0) fx.white--;
+
+  const wts = {
+    react: smooth(decomp / 0.28) * (1 - smooth((decomp - 0.3) / 0.25)),
+    chaos: smooth((decomp - 0.6) / 0.25)
+  };
+  const funW = smooth((decomp - 0.45) / 0.3);
+  const rainAmt = smooth((decomp - 0.22) / 0.3);
+
+  octx.clearRect(0, 0, W, H);
+  octx.drawImage(cv, 0, 0);
+  ctx.fillStyle = '#040704';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.globalAlpha = Math.min(0.85, (0.22 + wts.chaos * 0.3) * (0.15 + driveS * 0.85) * MS.trail);
+  ctx.translate(0, 1.5 + wts.chaos * 2);
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(CX, CY);
+  if (mirror) ctx.scale(-1, 1);
+  ctx.scale(camZoom, camZoom);
+  ctx.translate(-CX, -CY);
+  drawStreams(bass, mid, s, Math.min(1, Math.max(rainAmt, fx.rainBoost > 0 ? 0.9 : 0) * MS.rain));
+
+  for (const o of cells) {
+    const v = stepCell(o, bass, mid, s);
+    if (o.state === 'home') {
+      drawHomeCell(o, 1 + v * 0.1 * wts.react);
+    } else if (o.state === 'free') {
+      drawFrame(o, o.x, o.y, o.rot, o.tier * (0.9 + v * 0.3), 0.7, funW);
+      drawLiveTxt(o, o.tx, o.ty, o.tier, v, funW);
+    } else {
+      const k = smooth(o.kp);
+      drawFrame(o, o.ax + (o.hx - o.ax) * k, o.ay + (o.hy - o.ay) * k,
+        o.ar * (1 - k), o.tier + (1 - o.tier) * k, 0.85, funW * (1 - k));
+      if (k < 0.95) drawLiveTxt(o, o.bx + (o.hx - o.bx) * k, o.by + (o.hy - o.by) * k,
+        o.tier + (1 - o.tier) * k, v * (1 - k), funW * (1 - k));
+      else drawHomeCell(o, 1);
+    }
+  }
+  // ondes de choc
+  const diag = Math.hypot(W, H) * 0.6;
+  shocks = shocks.filter(sh => sh.r < diag);
+  for (const sh of shocks) {
+    sh.r += 15 * (0.4 + driveS);
+    const a = 1 - sh.r / diag;
+    ctx.strokeStyle = `rgba(0,255,65,${a * 0.8})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(CX, CY, sh.r, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const o of cells) {
+      const px2 = o.state === 'home' ? o.hx : o.tx;
+      const py2 = o.state === 'home' ? o.hy : o.ty;
+      if (Math.abs(Math.hypot(px2 - CX, py2 - CY) - sh.r) < 28) o.pop = 1;
+    }
+  }
+  drawWordFloat(s);
+  if (MS.bigWords) drawBigWords(s);
+  ctx.restore();
+  // strobe
+  if (strobeT > 0) {
+    strobeT--;
+    if (Math.floor(strobeT / 3) % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+  // scanlines
+  if (modes.scan) {
+    if (!scanPat) {
+      const c2 = document.createElement('canvas');
+      c2.width = 1; c2.height = 3;
+      const x2 = c2.getContext('2d');
+      x2.fillStyle = 'rgba(0,0,0,0.45)';
+      x2.fillRect(0, 0, 1, 1);
+      scanPat = ctx.createPattern(c2, 'repeat');
+    }
+    ctx.fillStyle = scanPat;
+    ctx.fillRect(0, 0, W, H);
+  }
+  // négatif
+  if (invertT > 0) {
+    invertT--;
+    ctx.save();
+    ctx.globalCompositeOperation = 'difference';
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(1, invertT / 8)})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+  // flash blanc
+  if (flashT > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${(flashT / 14) * 0.92})`;
+    ctx.fillRect(0, 0, W, H);
+    flashT--;
+  }
+  drawTranscript();
+  if (fx.labelT > 0) {
+    fx.labelT--;
+    ctx.font = '600 16px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = `rgba(255,255,255,${Math.min(1, fx.labelT / 30) * 0.8})`;
+    ctx.fillText(fx.label, 20, H - 24);
+  }
+}
+loop();
+
+// ---------- CLAVIER VJ ----------
+function fxLabel(nm) { fx.label = nm; fx.labelT = 100; }
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' && e.target.type === 'file') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'tab' || k.startsWith('arrow')) e.preventDefault();
+  if (k === 'tab') { toggleTranscript(); return; }
+  if (k === 'a') { fx.reform = 60; fxLabel('Recomposition'); }
+  else if (k === 'z') { fx.chaos = 60; fxLabel('Chaos'); }
+  else if (k === 'e') { gKick = 0.4; decomp = Math.min(1, decomp + 0.12); for (const o of cells) o.pop = 1; fxLabel('Explosion'); }
+  else if (k === 'r') { decomp = 0; hardReset(); fxLabel('Reset'); }
+  else if (k === 't') { fx.freeze = !fx.freeze; fxLabel(fx.freeze ? 'Figé' : 'Reprise'); }
+  else if (k === 'w') { fx.slow = 200; fx.fast = 0; fxLabel('Ralenti'); }
+  else if (k === 'x') { fx.fast = 200; fx.slow = 0; fxLabel('Accéléré'); }
+  else if (k === 's') { sens.value = String(Math.min(3, Number(sens.value) + 0.1)); fxLabel('Sensibilité ' + Number(sens.value).toFixed(1)); }
+  else if (k === 'q') { sens.value = String(Math.max(0.5, Number(sens.value) - 0.1)); fxLabel('Sensibilité ' + Number(sens.value).toFixed(1)); }
+  else if (k === 'p') { document.getElementById('fsbtn').click(); }
+  else if (k === 'o') { ui.classList.toggle('hidden'); }
+  else if (k === 'm') { document.getElementById('keymap').classList.toggle('show'); }
+  else if (k === 'f') { for (const o of cells) if (o.state === 'home') o.fd = true; decomp = Math.max(decomp, 0.8); fxLabel('Tout lâche'); }
+  else if (k === 'g') { decomp = 0.05; fxLabel('Rappel général'); }
+  else if (k === 'h') { fx.rainUp = 220; fxLabel('Pluie inversée'); }
+  else if (k === 'j') { fx.rainBoost = 140; fxLabel('Rafale'); }
+  else if (k === 'b') { fx.white = 90; fxLabel('Flash'); }
+  else if (k === 'v') { for (const o of cells) o.pop = 1; fxLabel('Vague'); }
+  else if (k === 'c') { for (const st of streams) st.y = -Math.random() * H * 0.35; fxLabel('Rideau'); }
+  else if (k === 'd') { modes.txt = (modes.txt + 1) % 3; fxLabel(TXT_NAMES[modes.txt]); }
+  else if (k === 'k') { modes.border = (modes.border + 1) % 4; fxLabel(BORDER_NAMES[modes.border]); }
+  else if (k === 'l') { modes.fill = (modes.fill + 1) % 4; fxLabel(FILL_NAMES[modes.fill]); }
+  else if (k === 'n') { flashT = 14; fxLabel('Flash'); }
+  else if (k === 'u') { invertT = 45; fxLabel('Négatif'); }
+  else if (k === 'y') { modes.scan = !modes.scan; fxLabel(modes.scan ? 'Scanlines' : 'Scanlines off'); }
+  else if (k === 'i') { shocks.push({ r: 10 }); fxLabel('Onde de choc'); }
+  else if (k === ' ') { strobeT = 24; fxLabel('Strobe'); }
+  else if (k === 'enter') { mirror = !mirror; fxLabel(mirror ? 'Miroir' : 'Miroir off'); }
+  else if (k === 'arrowright') { hueShift = (hueShift + 20) % 360; fxLabel('Teinte +' + hueShift + '°'); }
+  else if (k === 'arrowleft') { hueShift = (hueShift + 340) % 360; fxLabel('Teinte +' + hueShift + '°'); }
+  else if (k === 'arrowup') { camZoom = Math.min(2, camZoom + 0.1); fxLabel('Zoom ' + camZoom.toFixed(1)); }
+  else if (k === 'arrowdown') { camZoom = Math.max(0.5, camZoom - 0.1); fxLabel('Zoom ' + camZoom.toFixed(1)); }
+  else if (k >= '1' && k <= '9') { useSheet(Number(k) - 1); }
+  else if (k === '0') { if (sources.length) useSheet((curSheet + 1) % sources.length); }
+});
+
+</script>
+</body>
+</html>
